@@ -22,7 +22,7 @@ A smart tool that automatically generates meaningful Git commit messages based o
 2. Install the required dependencies:
 
 ```bash
-pip install openai
+pip install -r requirements.txt
 ```
 
 3. Make the script executable:

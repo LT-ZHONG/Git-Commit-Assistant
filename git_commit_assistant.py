@@ -7,18 +7,25 @@ in your repository. It runs `git status` and `git diff --staged` commands, analy
 the changes, and uses an AI model to generate an appropriate commit message.
 """
 
-import subprocess
-import sys
 import os
 import argparse
+import subprocess
 from openai import OpenAI
+from dotenv import load_dotenv
+
 
 class GitCommitAssistant:
     def __init__(self, repo_path=None):
+        load_dotenv()
+
+        self.base_url = os.getenv('BASE_URL')
+        self.api_key = os.getenv('API_KEY')
+        self.model = os.getenv('MODEL')
+
         # Initialize OpenAI client with ModelScope configuration
         self.client = OpenAI(
-            base_url='https://api-inference.modelscope.cn/v1',
-            api_key='ms-092bae3a',  # ModelScope Token
+            base_url=self.base_url,
+            api_key=self.api_key,
         )
         
         # Configuration for thinking control
@@ -26,15 +33,17 @@ class GitCommitAssistant:
             "enable_thinking": True,
         }
         
-        # Model configuration
-        self.model = 'Qwen/Qwen3-32B'  # ModelScope Model-Id
-        
         # Set repository path
         self.repo_path = repo_path
         if self.repo_path:
             # Convert to absolute path if not already
             self.repo_path = os.path.abspath(self.repo_path)
             print(f"📁 Using repository path: {self.repo_path}")
+
+        print(f"🔧 Loaded configuration:")
+        print(f"  - Base URL: {self.base_url}")
+        print(f"  - API Key: {self.api_key}")
+        print(f"  - Model: {self.model}")
 
     def run_command(self, command):
         """Execute a shell command and return its output."""
@@ -134,58 +143,6 @@ class GitCommitAssistant:
             print(f"\nError generating commit message: {e}")
             return None
 
-    def confirm_and_commit(self, commit_message):
-        """Ask user to confirm and commit with the generated message."""
-        print("\n\n=== Commit Confirmation ===")
-        print("Do you want to use this commit message? (y/n/e to edit)")
-        
-        while True:
-            choice = input("> ").lower().strip()
-            
-            if choice == 'y':
-                # Commit with the generated message
-                commit_cmd = f'git commit -m "{commit_message.replace('"', '\\"')}"'
-                result = self.run_command(commit_cmd)
-                
-                if result is not None:
-                    print("\n✅ Commit successful!")
-                    print(result)
-                else:
-                    print("\n❌ Commit failed.")
-                break
-                
-            elif choice == 'n':
-                print("\nCommit cancelled.")
-                break
-                
-            elif choice == 'e':
-                # Let user edit the commit message
-                print("\n=== Edit Commit Message ===")
-                print("Current message:")
-                print(commit_message)
-                print("\nEnter your edited message (Ctrl+D to finish):")
-                
-                try:
-                    edited_message = sys.stdin.read().strip()
-                    
-                    if edited_message:
-                        commit_cmd = f'git commit -m "{edited_message.replace('"', '\\"')}"'
-                        result = self.run_command(commit_cmd)
-                        
-                        if result is not None:
-                            print("\n✅ Commit successful!")
-                            print(result)
-                        else:
-                            print("\n❌ Commit failed.")
-                    else:
-                        print("\nEmpty commit message. Commit cancelled.")
-                except EOFError:
-                    print("\nCommit message editing cancelled.")
-                break
-                
-            else:
-                print("Please enter 'y' to commit, 'n' to cancel, or 'e' to edit the message.")
-
     def run(self):
         """Main execution flow."""
         print("🚀 Git Commit Assistant")
@@ -223,26 +180,18 @@ class GitCommitAssistant:
         if git_diff is None:
             print("❌ Failed to get git diff.")
             return
+
+        print(git_diff)
         
         # Generate commit message
         commit_message = self.generate_commit_message(git_status, git_diff)
-        
-        if commit_message:
-            self.confirm_and_commit(commit_message)
-        else:
-            print("\n❌ Failed to generate commit message.")
 
-def main():
-    """Entry point for the script."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Automatically generate Git commit messages based on staged changes.')
-    parser.add_argument('--path', '-p', type=str, help='Path to the Git repository (default: current directory)')
-    
-    args = parser.parse_args()
-    
-    # Create and run the assistant with the specified repository path
-    assistant = GitCommitAssistant(repo_path=args.path)
-    assistant.run()
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Automatically generate Git commit messages based on staged changes.')
+    parser.add_argument('--path', '-p', type=str, help='Path to the Git repository (default: current directory)')
+
+    args = parser.parse_args()
+
+    assistant = GitCommitAssistant(repo_path=args.path)
+    assistant.run()
