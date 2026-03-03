@@ -1,9 +1,3 @@
-这份 `git_commit_assistant.py` 脚本是一个非常实用的工具，它通过 AI（基于 ModelScope 的 ZhipuAI/GLM-5 模型）自动分析你的代码变更并生成符合规范的 Git Commit Message。
-
-以下是为您准备的详细 README 文档：
-
----
-
 # Git Commit Assistant (AI-Powered)
 
 **Git Commit Assistant** 是一个基于 Python 的自动化工具，旨在利用大语言模型（LLM）为你生成的代码变更提供精准、专业且符合规范的提交说明（Commit Message）。
@@ -78,7 +72,3 @@ python git_commit_assistant.py <你的Git项目路径> [可选API_Key]
 * **暂存区检查**：如果没有任何文件被 `git add`，脚本会提示并退出。
 * **编码限制**：摘要行被限制在 72 个字符以内，以保持 Git 历史的最佳可读性。
 * **安全性**：请勿将包含 API Key 的 `.env` 文件上传到公共仓库。
-
----
-
-**想要我为您把这段 README 转换成英文版，或者为您添加一个自动安装依赖的 shell 脚本吗？**
