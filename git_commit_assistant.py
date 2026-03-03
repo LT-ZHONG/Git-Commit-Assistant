@@ -1,197 +1,126 @@
-#!/usr/bin/env python3
-"""
-Git Commit Assistant
-
-This script automatically generates Git commit messages based on the staged changes
-in your repository. It runs `git status` and `git diff --staged` commands, analyzes
-the changes, and uses an AI model to generate an appropriate commit message.
-"""
-
-import os
-import argparse
 import subprocess
+import sys
+import os
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# 加载 .env 文件
+load_dotenv()
 
-class GitCommitAssistant:
-    def __init__(self, repo_path=None):
-        load_dotenv()
 
-        self.base_url = os.getenv('BASE_URL')
-        self.api_key = os.getenv('API_KEY')
-        self.model = os.getenv('MODEL')
-
-        # Initialize OpenAI client with ModelScope configuration
-        self.client = OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
+def run_git_command(directory: str, args: list[str]) -> tuple[str, str, int]:
+    """在指定目录下执行 git 命令，返回 (stdout, stderr, returncode)。"""
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
-        
-        # Configuration for thinking control
-        self.extra_body = {
-            "enable_thinking": True,
-        }
-        
-        # Set repository path
-        self.repo_path = repo_path
-        if self.repo_path:
-            # Convert to absolute path if not already
-            self.repo_path = os.path.abspath(self.repo_path)
-            print(f"📁 Using repository path: {self.repo_path}")
+        return result.stdout, result.stderr, result.returncode
+    except FileNotFoundError:
+        return "", "git 命令未找到，请确认已安装 git", 1
 
-        print(f"🔧 Loaded configuration:")
-        print(f"  - Base URL: {self.base_url}")
-        print(f"  - API Key: {self.api_key}")
-        print(f"  - Model: {self.model}")
 
-    def run_command(self, command):
-        """Execute a shell command and return its output."""
-        try:
-            # Run command in the specified repository directory if provided
-            cwd = self.repo_path if self.repo_path else None
-            
-            result = subprocess.run(
-                command, 
-                shell=True, 
-                check=True, 
-                text=True, 
-                capture_output=True,
-                cwd=cwd
-            )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            print(f"Error executing command: {command}")
-            print(f"Error output: {e.stderr}")
-            return None
+def generate_commit_message(directory: str, api_key: str) -> None:
+    # 1. 运行 git status
+    print(">>> 正在运行 git status ...")
+    status_out, status_err, status_code = run_git_command(directory, ["status"])
+    if status_code != 0:
+        print(f"git status 执行失败：{status_err}", file=sys.stderr)
+        sys.exit(1)
+    print(status_out)
 
-    def get_git_status(self):
-        """Run git status command and return the output."""
-        return self.run_command("git status")
+    # 2. 运行 git --no-pager diff --staged
+    print(">>> 正在运行 git --no-pager diff --staged ...")
+    diff_out, diff_err, diff_code = run_git_command(
+        directory, ["--no-pager", "diff", "--staged"]
+    )
+    if diff_code != 0:
+        print(f"git diff --staged 执行失败：{diff_err}", file=sys.stderr)
+        sys.exit(1)
 
-    def get_git_diff(self):
-        """Run git diff --staged command and return the output."""
-        return self.run_command("git --no-pager diff --staged")
+    if not diff_out.strip():
+        print("没有检测到已暂存（staged）的变更，请先使用 git add 暂存文件后再运行。")
+        sys.exit(0)
 
-    def is_git_repository(self):
-        """Check if the specified directory is a Git repository."""
-        result = self.run_command("git rev-parse --is-inside-work-tree")
-        return result is not None and "true" in result
+    # 3. 构建 prompt
+    prompt = f"""请根据以下 git 信息，生成一个简洁、清晰的 git commit message。
 
-    def has_staged_changes(self, git_status):
-        """Check if there are staged changes ready to commit."""
-        return "Changes to be committed" in git_status
+要求：
+- 使用英文
+- 首行为简短摘要，不超过 72 个字符
+- 遵循 Conventional Commits 规范（如 feat、fix、refactor、docs、chore 等前缀）
+- 如有必要，可在空行后附上简短的正文描述
+- 直接输出 commit message，不需要任何额外解释
 
-    def generate_commit_message(self, git_status, git_diff):
-        """Generate a commit message based on git status and diff."""
-        prompt = f"""
-        Based on the following git status and diff information, generate a concise and descriptive git commit message.
-        
-        Follow these guidelines:
-        1. Start with an appropriate prefix (feat:, fix:, docs:, style:, refactor:, perf:, test:, build:, ci:, chore:)
-        2. Keep the subject line under 50 characters
-        3. Add a blank line after the subject
-        4. Provide a brief description in the body (wrap at 72 characters)
-        5. Focus on what changed and why, not how
-        6. Use imperative mood (e.g., "Add feature" not "Added feature")
-        
-        Git Status:
-        {git_status}
-        
-        Git Diff:
-        {git_diff}
-        
-        Commit message:
-        """
-        
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ],
-                stream=True,
-                extra_body=self.extra_body
-            )
-            
-            thinking_output = []
-            commit_message = []
-            done_thinking = False
-            
-            print("\n=== AI is analyzing your changes ===")
-            
-            for chunk in response:
-                thinking_chunk = getattr(chunk.choices[0].delta, 'reasoning_content', '')
-                answer_chunk = getattr(chunk.choices[0].delta, 'content', '')
-                
-                if thinking_chunk:
-                    thinking_output.append(thinking_chunk)
-                    print(thinking_chunk, end='', flush=True)
-                elif answer_chunk:
-                    if not done_thinking:
-                        print('\n\n=== Generated Commit Message ===\n')
-                        done_thinking = True
-                    commit_message.append(answer_chunk)
-                    print(answer_chunk, end='', flush=True)
-            
-            return ''.join(commit_message).strip()
-            
-        except Exception as e:
-            print(f"\nError generating commit message: {e}")
-            return None
+--- git status ---
+{status_out}
 
-    def run(self):
-        """Main execution flow."""
-        print("🚀 Git Commit Assistant")
-        print("=======================")
-        
-        # Check if the specified directory is a Git repository
-        if not self.is_git_repository():
-            print("❌ Error: Not a Git repository.")
-            if self.repo_path:
-                print(f"Please make sure '{self.repo_path}' is a valid Git repository.")
-            else:
-                print("Please run this command from within a Git repository or specify a valid repository path.")
-            return
-        
-        # Get git status
-        print("\n📊 Checking git status...")
-        git_status = self.get_git_status()
-        
-        if git_status is None:
-            print("❌ Failed to get git status.")
-            return
-        
-        print(git_status)
-        
-        # Check if there are staged changes
-        if not self.has_staged_changes(git_status):
-            print("\n❌ No staged changes found.")
-            print("Please stage your changes with 'git add' before running this command.")
-            return
-        
-        # Get git diff of staged changes
-        print("\n📝 Getting diff of staged changes...")
-        git_diff = self.get_git_diff()
-        
-        if git_diff is None:
-            print("❌ Failed to get git diff.")
-            return
+--- git diff --staged ---
+{diff_out}
+"""
 
-        print(git_diff)
-        
-        # Generate commit message
-        commit_message = self.generate_commit_message(git_status, git_diff)
+    # 4. 调用 ZhipuAI/GLM-5
+    client = OpenAI(
+        base_url="https://api-inference.modelscope.cn/v1",
+        api_key=api_key,
+    )
+
+    print(">>> 正在生成 commit message ...\n")
+
+    response = client.chat.completions.create(
+        model="ZhipuAI/GLM-5",
+        messages=[{"role": "user", "content": prompt}],
+        stream=True,
+    )
+
+    done_reasoning = False
+    for chunk in response:
+        if not chunk.choices:
+            continue
+
+        delta = chunk.choices[0].delta
+        reasoning_chunk = getattr(delta, "reasoning_content", None) or ""
+        answer_chunk = delta.content or ""
+
+        if reasoning_chunk:
+            print(reasoning_chunk, end="", flush=True)
+        elif answer_chunk:
+            if not done_reasoning:
+                print("\n\n=== Generated Commit Message ===\n")
+                done_reasoning = True
+            print(answer_chunk, end="", flush=True)
+
+    print()  # 末尾换行
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("用法：python solution.py <git仓库目录> [ModelScope API Key]")
+        print("      API Key 默认从 .env 文件读取，或通过环境变量 MODELSCOPE_API_KEY 获取")
+        sys.exit(1)
+
+    directory = sys.argv[1]
+
+    if not os.path.isdir(directory):
+        print(f"错误：'{directory}' 不是有效目录", file=sys.stderr)
+        sys.exit(1)
+
+    # API Key 优先级：命令行参数 > 环境变量（从 .env 文件）
+    if len(sys.argv) >= 3:
+        api_key = sys.argv[2]
+    else:
+        api_key = os.environ.get("MODELSCOPE_API_KEY", "")
+
+    if not api_key:
+        print("错误：未提供 API Key，请在 .env 文件中设置 MODELSCOPE_API_KEY，或通过命令行参数传入。",
+              file=sys.stderr)
+        sys.exit(1)
+
+    generate_commit_message(directory, api_key)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Automatically generate Git commit messages based on staged changes.')
-    parser.add_argument('--path', '-p', type=str, help='Path to the Git repository (default: current directory)')
-
-    args = parser.parse_args()
-
-    assistant = GitCommitAssistant(repo_path=args.path)
-    assistant.run()
+    main()
